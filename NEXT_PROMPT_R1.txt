@@ -1,0 +1,1 @@
+后端 go build 直接跑不过，编译报 `"gorm.io/gorm" imported and not used` 和 `"errors" imported and not used`，docker-compose 起 Postgres/Redis 也接不上后端。前端这边 node_modules 都没装，npm install 都没跑，ng serve 没法验证，访问不了。前后端是耦合的，后端起不来前端也跑不通。检查修复一下。
