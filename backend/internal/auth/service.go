@@ -3,6 +3,7 @@ package auth
 import (
 	"banking/config"
 	"banking/internal/audit"
+	"banking/pkg/cache"
 	"banking/pkg/masking"
 	"context"
 	"crypto/hmac"
@@ -18,17 +19,15 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
-
-	"github.com/redis/go-redis/v9"
 )
 
 type Repository struct {
 	db    *gorm.DB
-	redis *redis.Client
+	cache cache.Cache
 }
 
-func NewRepository(db *gorm.DB, rdb *redis.Client) *Repository {
-	return &Repository{db: db, redis: rdb}
+func NewRepository(db *gorm.DB, c cache.Cache) *Repository {
+	return &Repository{db: db, cache: c}
 }
 
 type Service struct {
@@ -96,7 +95,7 @@ func (s *Service) Login(req *LoginRequest) (*LoginResponse, error) {
 
 	if user.TwoFAEnabled {
 		sendToken := uuid.New().String()
-		s.repo.redis.Set(context.Background(), "twofa_pending:"+sendToken, user.ID, 5*time.Minute)
+		s.repo.cache.Set(context.Background(), "twofa_pending:"+sendToken, fmt.Sprintf("%d", user.ID), 5*time.Minute)
 		return &LoginResponse{
 			NeedTwoFA:  true,
 			TwoFAToken: sendToken,
@@ -123,7 +122,7 @@ func (s *Service) SendVerificationCode(userID uint, codeType, target string) err
 	}
 
 	lastCodeKey := fmt.Sprintf("last_code:%d:%s", userID, codeType)
-	lastCode, _ := s.repo.redis.Get(context.Background(), lastCodeKey).Result()
+	lastCode, _ := s.repo.cache.Get(context.Background(), lastCodeKey)
 	if lastCode == code {
 		code, _ = s.generateCode()
 	}
@@ -140,7 +139,7 @@ func (s *Service) SendVerificationCode(userID uint, codeType, target string) err
 		return err
 	}
 
-	s.repo.redis.Set(context.Background(), lastCodeKey, code, 5*time.Minute)
+	s.repo.cache.Set(context.Background(), lastCodeKey, code, 5*time.Minute)
 
 	fmt.Printf("[MOCK] Send %s code to %s: %s\n", codeType, target, code)
 
@@ -179,7 +178,7 @@ func (s *Service) VerifyCode(userID uint, codeType, code string) (bool, error) {
 }
 
 func (s *Service) VerifyTwoFA(twoFAToken, code string) (*LoginResponse, error) {
-	userIDStr, err := s.repo.redis.Get(context.Background(), "twofa_pending:"+twoFAToken).Result()
+	userIDStr, err := s.repo.cache.Get(context.Background(), "twofa_pending:"+twoFAToken)
 	if err != nil {
 		return nil, errors.New("invalid or expired session")
 	}
@@ -197,7 +196,7 @@ func (s *Service) VerifyTwoFA(twoFAToken, code string) (*LoginResponse, error) {
 		return nil, err
 	}
 
-	s.repo.redis.Del(context.Background(), "twofa_pending:"+twoFAToken)
+	s.repo.cache.Del(context.Background(), "twofa_pending:"+twoFAToken)
 
 	token, err := s.generateToken(userID)
 	if err != nil {

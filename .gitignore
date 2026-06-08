@@ -48,6 +48,15 @@ htmlcov/
 
 # Go
 /vendor/
+*.db
+*.test.exe
+
+# Angular
+.angular/
+frontend/.angular/
+
+# Test artifacts
+screenshot_*.png
 
 # Rust
 Cargo.lock

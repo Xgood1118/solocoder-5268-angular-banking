@@ -2,6 +2,7 @@ package recon
 
 import (
 	"banking/internal/account"
+	"banking/pkg/cache"
 	"context"
 	"fmt"
 	"log"
@@ -9,7 +10,6 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -22,18 +22,18 @@ func NewRepository(db *gorm.DB) *Repository {
 }
 
 type Service struct {
-	repo         *Repository
-	accountRepo  *account.Repository
-	cron         *cron.Cron
-	rdb          *redis.Client
+	repo        *Repository
+	accountRepo *account.Repository
+	cron        *cron.Cron
+	cache       cache.Cache
 }
 
-func NewService(repo *Repository, accountRepo *account.Repository, rdb *redis.Client) *Service {
+func NewService(repo *Repository, accountRepo *account.Repository, c cache.Cache) *Service {
 	return &Service{
 		repo:        repo,
 		accountRepo: accountRepo,
 		cron:        cron.New(),
-		rdb:         rdb,
+		cache:       c,
 	}
 }
 
@@ -49,12 +49,12 @@ func (s *Service) runDailyRecon() {
 	lockKey := "recon:lock:daily"
 	ctx := context.Background()
 
-	ok, err := s.rdb.SetNX(ctx, lockKey, "1", 30*time.Minute).Result()
+	ok, err := s.cache.SetNX(ctx, lockKey, "1", 30*time.Minute)
 	if err != nil || !ok {
 		log.Println("Recon already running, skip")
 		return
 	}
-	defer s.rdb.Del(ctx, lockKey)
+	defer s.cache.Del(ctx, lockKey)
 
 	log.Println("Starting daily reconciliation...")
 

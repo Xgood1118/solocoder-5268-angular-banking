@@ -68,8 +68,8 @@ import { Transfer } from '../models';
 
         <div class="flex-between mt-3" *ngIf="total > 0">
           <button class="bank-btn bank-btn-outline" (click)="prevPage()" [disabled]="page <= 1">上一页</button>
-          <span>第 {{ page }} 页 / 共 {{ Math.ceil(total / pageSize) }} 页</span>
-          <button class="bank-btn bank-btn-outline" (click)="nextPage()" [disabled]="page >= Math.ceil(total / pageSize)">下一页</button>
+          <span>第 {{ page }} 页 / 共 {{ totalPages }} 页</span>
+          <button class="bank-btn bank-btn-outline" (click)="nextPage()" [disabled]="page >= totalPages">下一页</button>
         </div>
       </div>
 
@@ -140,8 +140,12 @@ export class TransactionsComponent implements OnInit {
     }
   }
 
+  get totalPages(): number {
+    return Math.ceil(this.total / this.pageSize);
+  }
+
   nextPage(): void {
-    if (this.page < Math.ceil(this.total / this.pageSize)) {
+    if (this.page < this.totalPages) {
       this.page++;
       this.loadTransfers();
     }

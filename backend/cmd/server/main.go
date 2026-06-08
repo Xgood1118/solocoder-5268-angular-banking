@@ -10,8 +10,8 @@ import (
 	"banking/internal/recon"
 	"banking/internal/report"
 	"banking/internal/transfer"
+	"banking/pkg/cache"
 	"banking/pkg/database"
-	"banking/pkg/redis"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -20,23 +20,35 @@ import (
 func main() {
 	cfg := config.Load()
 
-	db, err := database.NewPostgres(cfg.DatabaseURL)
+	db, err := database.NewDatabase(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
+	log.Printf("Database connected")
 
-	rdb, err := redis.NewClient(cfg.RedisURL)
-	if err != nil {
-		log.Fatalf("Failed to connect to redis: %v", err)
+	var c cache.Cache
+	if cfg.RedisURL == "memory" {
+		log.Printf("Using memory cache")
+		c = cache.NewMemoryCache()
+	} else {
+		redisCache, err := cache.NewRedisCache(cfg.RedisURL)
+		if err != nil {
+			log.Printf("Redis not available, falling back to memory cache: %v", err)
+			c = cache.NewMemoryCache()
+		} else {
+			log.Printf("Redis connected")
+			c = redisCache
+		}
 	}
 
 	database.AutoMigrate(db)
+	log.Printf("Database migration completed")
 
 	auditRepo := audit.NewRepository(db)
 	auditSvc := audit.NewService(auditRepo)
 	auditMiddleware := audit.NewMiddleware(auditSvc)
 
-	limitRepo := limit.NewRepository(db, rdb)
+	limitRepo := limit.NewRepository(db, c)
 	limitSvc := limit.NewService(limitRepo)
 
 	accountRepo := account.NewRepository(db)
@@ -45,11 +57,11 @@ func main() {
 	transferRepo := transfer.NewRepository(db)
 	transferSvc := transfer.NewService(transferRepo, accountSvc, auditSvc, limitSvc)
 
-	authRepo := auth.NewRepository(db, rdb)
+	authRepo := auth.NewRepository(db, c)
 	authSvc := auth.NewService(authRepo, auditSvc)
 
 	reconRepo := recon.NewRepository(db)
-	reconSvc := recon.NewService(reconRepo, accountRepo, rdb)
+	reconSvc := recon.NewService(reconRepo, accountRepo, c)
 	reconSvc.StartScheduler()
 
 	reportSvc := report.NewService(db)

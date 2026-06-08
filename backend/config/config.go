@@ -14,8 +14,8 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		Port:         getEnv("PORT", "8080"),
-		DatabaseURL:  getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/banking?sslmode=disable"),
-		RedisURL:     getEnv("REDIS_URL", "redis://localhost:6379/0"),
+		DatabaseURL:  getEnv("DATABASE_URL", "banking.db"),
+		RedisURL:     getEnv("REDIS_URL", "memory"),
 		JWTSecret:    getEnv("JWT_SECRET", "your-jwt-secret-key-change-in-production"),
 		Pepper:       getEnv("PEPPER", "banking-pepper-key-2024"),
 		AuditHMACKey: getEnv("AUDIT_HMAC_KEY", "audit-hmac-secret-key"),

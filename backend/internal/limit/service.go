@@ -1,22 +1,22 @@
 package limit
 
 import (
+	"banking/pkg/cache"
 	"context"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
 type Repository struct {
 	db    *gorm.DB
-	redis *redis.Client
+	cache cache.Cache
 }
 
-func NewRepository(db *gorm.DB, rdb *redis.Client) *Repository {
-	return &Repository{db: db, redis: rdb}
+func NewRepository(db *gorm.DB, c cache.Cache) *Repository {
+	return &Repository{db: db, cache: c}
 }
 
 type Service struct {
@@ -37,13 +37,13 @@ func (s *Service) CheckLimit(userID uint, amount float64, scope string) error {
 	}
 
 	dailyKey := fmt.Sprintf("limit:daily:%d:%s", userID, scope)
-	dailyUsed, _ := s.repo.redis.Get(context.Background(), dailyKey).Float64()
+	dailyUsed, _ := s.repo.cache.GetFloat64(context.Background(), dailyKey)
 	if dailyUsed+amount > defaultDaily {
 		return fmt.Errorf("今日累计限额 %.2f 元，已用 %.2f 元，本次 %.2f 元超限", defaultDaily, dailyUsed, amount)
 	}
 
 	monthlyKey := fmt.Sprintf("limit:monthly:%d:%s", userID, scope)
-	monthlyUsed, _ := s.repo.redis.Get(context.Background(), monthlyKey).Float64()
+	monthlyUsed, _ := s.repo.cache.GetFloat64(context.Background(), monthlyKey)
 	if monthlyUsed+amount > defaultMonthly {
 		return fmt.Errorf("本月累计限额 %.2f 元，已用 %.2f 元，本次 %.2f 元超限", defaultMonthly, monthlyUsed, amount)
 	}
@@ -55,19 +55,15 @@ func (s *Service) IncrementUsage(userID uint, amount float64, scope string) {
 	dailyKey := fmt.Sprintf("limit:daily:%d:%s", userID, scope)
 	ctx := context.Background()
 
-	pipe := s.repo.redis.TxPipeline()
-	pipe.IncrByFloat(ctx, dailyKey, amount)
-	pipe.Expire(ctx, dailyKey, 24*time.Hour)
-	pipe.Exec(ctx)
+	s.repo.cache.IncrByFloat(ctx, dailyKey, amount)
+	s.repo.cache.Expire(ctx, dailyKey, 24*time.Hour)
 
 	monthlyKey := fmt.Sprintf("limit:monthly:%d:%s", userID, scope)
-	pipe2 := s.repo.redis.TxPipeline()
-	pipe2.IncrByFloat(ctx, monthlyKey, amount)
+	s.repo.cache.IncrByFloat(ctx, monthlyKey, amount)
 
 	now := time.Now()
 	nextMonth := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, now.Location())
-	pipe2.ExpireAt(ctx, monthlyKey, nextMonth)
-	pipe2.Exec(ctx)
+	s.repo.cache.ExpireAt(ctx, monthlyKey, nextMonth)
 }
 
 func (s *Service) GetLimits(userID uint, scope string) map[string]interface{} {
@@ -75,8 +71,8 @@ func (s *Service) GetLimits(userID uint, scope string) map[string]interface{} {
 	monthlyKey := fmt.Sprintf("limit:monthly:%d:%s", userID, scope)
 	ctx := context.Background()
 
-	dailyUsed, _ := s.repo.redis.Get(ctx, dailyKey).Float64()
-	monthlyUsed, _ := s.repo.redis.Get(ctx, monthlyKey).Float64()
+	dailyUsed, _ := s.repo.cache.GetFloat64(ctx, dailyKey)
+	monthlyUsed, _ := s.repo.cache.GetFloat64(ctx, monthlyKey)
 
 	return map[string]interface{}{
 		"per_transaction": map[string]float64{
