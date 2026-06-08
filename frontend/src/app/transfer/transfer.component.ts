@@ -44,8 +44,8 @@ import { v4 as uuidv4 } from 'uuid';
             </div>
 
             <div class="bank-form-group" *ngIf="form.transfer_type === 'intra_bank'">
-              <label class="bank-label">收款账户ID</label>
-              <input type="number" class="bank-input" [(ngModel)]="form.to_account_id" name="to_account_id" placeholder="请输入收款账户ID" />
+              <label class="bank-label">收款账号</label>
+              <input type="text" class="bank-input" [(ngModel)]="form.to_account_no" name="to_account_no" placeholder="请输入收款账号" />
             </div>
 
             <div class="bank-form-group" *ngIf="form.transfer_type === 'inter_bank'">
@@ -193,10 +193,9 @@ export class TransferComponent implements OnInit {
 
   onTypeChange(): void {
     if (this.form.transfer_type === 'intra_bank') {
-      this.form.to_account_no = '';
       this.form.to_bank_name = '';
     } else {
-      this.form.to_account_id = null;
+      this.form.to_account_no = '';
     }
     this.calculateFee();
   }
@@ -236,8 +235,8 @@ export class TransferComponent implements OnInit {
       this.error = '请输入收款人姓名';
       return;
     }
-    if (this.form.transfer_type === 'intra_bank' && !this.form.to_account_id) {
-      this.error = '请输入收款账户ID';
+    if (this.form.transfer_type === 'intra_bank' && !this.form.to_account_no) {
+      this.error = '请输入收款账号';
       return;
     }
     if (this.form.transfer_type === 'inter_bank' && !this.form.to_account_no) {

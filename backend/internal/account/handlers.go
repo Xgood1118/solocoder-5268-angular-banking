@@ -1,7 +1,6 @@
 package account
 
 import (
-	"banking/pkg/masking"
 	"net/http"
 	"strconv"
 
@@ -29,8 +28,6 @@ func RegisterRoutes(r *gin.RouterGroup, svc *Service) {
 				return
 			}
 
-			account.AccountNumber = masking.MaskCardNumber(account.AccountNumber)
-
 			c.JSON(http.StatusCreated, account)
 		})
 
@@ -42,10 +39,6 @@ func RegisterRoutes(r *gin.RouterGroup, svc *Service) {
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
-			}
-
-			for i := range accounts {
-				accounts[i].AccountNumber = masking.MaskCardNumber(accounts[i].AccountNumber)
 			}
 
 			c.JSON(http.StatusOK, accounts)
@@ -62,8 +55,6 @@ func RegisterRoutes(r *gin.RouterGroup, svc *Service) {
 				c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 				return
 			}
-
-			account.AccountNumber = masking.MaskCardNumber(account.AccountNumber)
 
 			c.JSON(http.StatusOK, account)
 		})

@@ -6,6 +6,7 @@ import (
 	"banking/internal/limit"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -71,15 +72,48 @@ func (s *Service) CreateTransfer(req *CreateTransferRequest) (*Transfer, error) 
 		return nil, errors.New("insufficient balance")
 	}
 
+	var toAccountID uint
+	var toAccountNo string
+	var toAccountName string
+
+	if req.TransferType == TransferTypeIntraBank {
+		if req.ToAccountID > 0 {
+			toAcc, err := s.accountSvc.GetAccountByID(req.ToAccountID)
+			if err != nil {
+				return nil, errors.New("to account not found")
+			}
+			toAccountID = toAcc.ID
+			toAccountNo = toAcc.AccountNumber
+			toAccountName = toAcc.AccountName
+		} else if req.ToAccountNo != "" {
+			toAcc, err := s.accountSvc.GetAccountByNumber(req.ToAccountNo)
+			if err != nil {
+				return nil, errors.New("to account not found")
+			}
+			toAccountID = toAcc.ID
+			toAccountNo = toAcc.AccountNumber
+			toAccountName = toAcc.AccountName
+		} else {
+			return nil, errors.New("to_account_id or to_account_no is required for intra bank transfer")
+		}
+
+		if toAccountID == req.FromAccountID {
+			return nil, errors.New("cannot transfer to the same account")
+		}
+	} else {
+		toAccountNo = req.ToAccountNo
+		toAccountName = req.ToAccountName
+	}
+
 	transfer := &Transfer{
 		BizID:         req.BizID,
 		UserID:        req.UserID,
 		FromAccountID: req.FromAccountID,
-		ToAccountID:   req.ToAccountID,
+		ToAccountID:   toAccountID,
 		FromAccountNo: fromAcc.AccountNumber,
-		ToAccountNo:   req.ToAccountNo,
+		ToAccountNo:   toAccountNo,
 		ToBankName:    req.ToBankName,
-		ToAccountName: req.ToAccountName,
+		ToAccountName: toAccountName,
 		Amount:        req.Amount,
 		Currency:      string(fromAcc.Currency),
 		TransferType:  req.TransferType,
@@ -130,12 +164,6 @@ func (s *Service) processIntraBank(tx *gorm.DB, transfer *Transfer) error {
 		return errors.New("to account id required for intra bank transfer")
 	}
 
-	toAcc, err := s.accountSvc.GetAccount(0, transfer.ToAccountID)
-	if err != nil {
-		return errors.New("to account not found")
-	}
-	_ = toAcc
-
 	if err := s.accountSvc.Debit(tx, transfer.FromAccountID, transfer.Amount,
 		transfer.BizID+"-debit", transfer.Description, fmt.Sprintf("%d", transfer.ID)); err != nil {
 		return err
@@ -157,44 +185,66 @@ func (s *Service) processIntraBank(tx *gorm.DB, transfer *Transfer) error {
 	transfer.Status = StatusSuccess
 	transfer.CompletedAt = &now
 
-	return nil
+	return tx.Save(transfer).Error
 }
 
 func (s *Service) processInterBank(tx *gorm.DB, transfer *Transfer) error {
-	if err := s.accountSvc.FreezeAmount(transfer.FromAccountID, transfer.Amount+transfer.Fee, transfer.BizID); err != nil {
+	if err := s.accountSvc.FreezeAmountTx(tx, transfer.FromAccountID, transfer.Amount+transfer.Fee); err != nil {
 		return err
 	}
 
 	transfer.Status = StatusFrozen
 	transfer.ClearingRefNo = uuid.New().String()
 
-	go s.processInterBankAsync(transfer)
+	if err := tx.Save(transfer).Error; err != nil {
+		return err
+	}
+
+	go s.processInterBankAsync(transfer.ID)
 
 	return nil
 }
 
-func (s *Service) processInterBankAsync(transfer *Transfer) {
+func (s *Service) processInterBankAsync(transferID uint) {
 	time.Sleep(2 * time.Second)
 
-	fmt.Printf("[MOCK] 发起跨行清算: %s, 金额: %.2f\n", transfer.ClearingRefNo, transfer.Amount)
+	tx := s.repo.db.Begin()
+	if tx.Error != nil {
+		log.Printf("processInterBankAsync: begin tx failed: %v", tx.Error)
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	var t Transfer
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&t, transferID).Error; err != nil {
+		tx.Rollback()
+		log.Printf("processInterBankAsync: find transfer failed: %v", err)
+		return
+	}
+
+	if t.Status != StatusFrozen {
+		tx.Rollback()
+		return
+	}
+
+	fmt.Printf("[MOCK] 发起跨行清算: %s, 金额: %.2f\n", t.ClearingRefNo, t.Amount)
 
 	success := true
-	// 模拟90%成功率
-	if transfer.Amount > 50000 {
+	if t.Amount > 50000 {
 		success = false
 	}
 
-	tx := s.repo.db.Begin()
-
-	var t Transfer
-	tx.Where("id = ?", transfer.ID).First(&t)
-
 	if success {
-		fmt.Printf("[MOCK] 跨行清算成功: %s\n", transfer.ClearingRefNo)
+		fmt.Printf("[MOCK] 跨行清算成功: %s\n", t.ClearingRefNo)
 
 		if err := s.accountSvc.Debit(tx, t.FromAccountID, t.Amount,
 			t.BizID+"-debit", t.Description, fmt.Sprintf("%d", t.ID)); err != nil {
 			tx.Rollback()
+			log.Printf("processInterBankAsync: debit failed: %v", err)
 			return
 		}
 
@@ -202,12 +252,14 @@ func (s *Service) processInterBankAsync(transfer *Transfer) {
 			if err := s.accountSvc.Debit(tx, t.FromAccountID, t.Fee,
 				t.BizID+"-fee", "手续费", fmt.Sprintf("%d", t.ID)); err != nil {
 				tx.Rollback()
+				log.Printf("processInterBankAsync: debit fee failed: %v", err)
 				return
 			}
 		}
 
-		if err := s.accountSvc.UnfreezeAmount(t.FromAccountID, t.Amount+t.Fee); err != nil {
+		if err := s.accountSvc.UnfreezeAmountTx(tx, t.FromAccountID, t.Amount+t.Fee); err != nil {
 			tx.Rollback()
+			log.Printf("processInterBankAsync: unfreeze failed: %v", err)
 			return
 		}
 
@@ -215,10 +267,11 @@ func (s *Service) processInterBankAsync(transfer *Transfer) {
 		t.Status = StatusSuccess
 		t.CompletedAt = &now
 	} else {
-		fmt.Printf("[MOCK] 跨行清算失败: %s\n", transfer.ClearingRefNo)
+		fmt.Printf("[MOCK] 跨行清算失败: %s\n", t.ClearingRefNo)
 
-		if err := s.accountSvc.UnfreezeAmount(t.FromAccountID, t.Amount+t.Fee); err != nil {
+		if err := s.accountSvc.UnfreezeAmountTx(tx, t.FromAccountID, t.Amount+t.Fee); err != nil {
 			tx.Rollback()
+			log.Printf("processInterBankAsync: unfreeze failed: %v", err)
 			return
 		}
 
@@ -226,7 +279,12 @@ func (s *Service) processInterBankAsync(transfer *Transfer) {
 		t.FailureReason = "清算失败，对方银行返回错误"
 	}
 
-	tx.Save(&t)
+	if err := tx.Save(&t).Error; err != nil {
+		tx.Rollback()
+		log.Printf("processInterBankAsync: save transfer failed: %v", err)
+		return
+	}
+
 	tx.Commit()
 }
 

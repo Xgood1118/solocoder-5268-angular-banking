@@ -201,6 +201,22 @@ func (s *Service) GetAccount(userID, accountID uint) (*Account, error) {
 	return &account, nil
 }
 
+func (s *Service) GetAccountByID(accountID uint) (*Account, error) {
+	var account Account
+	if err := s.repo.db.First(&account, accountID).Error; err != nil {
+		return nil, err
+	}
+	return &account, nil
+}
+
+func (s *Service) GetAccountByNumber(accountNumber string) (*Account, error) {
+	var account Account
+	if err := s.repo.db.Where("account_number = ?", accountNumber).First(&account).Error; err != nil {
+		return nil, err
+	}
+	return &account, nil
+}
+
 func (s *Service) ListAccounts(userID uint) ([]Account, error) {
 	var accounts []Account
 	if err := s.repo.db.Where("user_id = ?", userID).Order("created_at DESC").Find(&accounts).Error; err != nil {
@@ -306,14 +322,22 @@ func (s *Service) FreezeAmount(accountID uint, amount float64, bizID string) err
 		return tx.Error
 	}
 
-	var account Account
-	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&account, accountID).Error; err != nil {
+	if err := s.FreezeAmountTx(tx, accountID, amount); err != nil {
 		tx.Rollback()
 		return err
 	}
 
+	tx.Commit()
+	return nil
+}
+
+func (s *Service) FreezeAmountTx(tx *gorm.DB, accountID uint, amount float64) error {
+	var account Account
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&account, accountID).Error; err != nil {
+		return err
+	}
+
 	if account.AvailableBalance < amount {
-		tx.Rollback()
 		return errors.New("insufficient available balance")
 	}
 
@@ -326,11 +350,9 @@ func (s *Service) FreezeAmount(accountID uint, amount float64, bizID string) err
 		})
 
 	if result.Error != nil || result.RowsAffected == 0 {
-		tx.Rollback()
 		return errors.New("freeze failed")
 	}
 
-	tx.Commit()
 	return nil
 }
 
@@ -340,14 +362,22 @@ func (s *Service) UnfreezeAmount(accountID uint, amount float64) error {
 		return tx.Error
 	}
 
-	var account Account
-	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&account, accountID).Error; err != nil {
+	if err := s.UnfreezeAmountTx(tx, accountID, amount); err != nil {
 		tx.Rollback()
 		return err
 	}
 
+	tx.Commit()
+	return nil
+}
+
+func (s *Service) UnfreezeAmountTx(tx *gorm.DB, accountID uint, amount float64) error {
+	var account Account
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&account, accountID).Error; err != nil {
+		return err
+	}
+
 	if account.FrozenAmount < amount {
-		tx.Rollback()
 		return errors.New("frozen amount insufficient")
 	}
 
@@ -360,11 +390,9 @@ func (s *Service) UnfreezeAmount(accountID uint, amount float64) error {
 		})
 
 	if result.Error != nil || result.RowsAffected == 0 {
-		tx.Rollback()
 		return errors.New("unfreeze failed")
 	}
 
-	tx.Commit()
 	return nil
 }
 
