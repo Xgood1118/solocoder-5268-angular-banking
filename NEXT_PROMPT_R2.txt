@@ -1,0 +1,1 @@
+前后端现在能起来了，go build / npm install / ng serve 都没问题，登录注册也跑通了。但是我用 alice 开了账户、给 bob 也开了账户，然后 alice 转账给 bob 直接报 400 "to account not found"。我试了同一用户不同账户之间互相转也是同样的报错，说明核心的转账功能整个残了，PROMPT 里说好的同行转账、跨行转账、幂等都不可用。检查修复一下。
